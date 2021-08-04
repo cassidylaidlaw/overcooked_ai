@@ -45,6 +45,14 @@ def fix_filetype(path, filetype):
     else:
         return path + filetype
 
+def generate_temporary_file_path(file_name=None, prefix="", suffix="", extension=""):
+    if file_name is None:
+        file_name = str(uuid.uuid1())
+    if extension and not extension.startswith("."):
+        extension = "." + extension
+    file_name = prefix + file_name + suffix + extension
+    return os.path.join(tempfile.gettempdir(), file_name)
+
 # MDP
 
 def cumulative_rewards_from_rew_list(rews):
@@ -162,3 +170,7 @@ def profile(fnc):
         print(s.getvalue())
         return retval
     return inner
+
+class classproperty(property):
+    def __get__(self, cls, owner):
+        return classmethod(self.fget).__get__(None, owner)()
