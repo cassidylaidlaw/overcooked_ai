@@ -73,7 +73,7 @@ class OvercookedEnv(object):
         self.start_state_fn = start_state_fn
         self.info_level = info_level
         self.reset()
-        if self.horizon >= MAX_HORIZON and self.info_level > 0:
+        if self.horizon >= MAX_HORIZON and self.state.order_list is None and self.info_level > 0:
             print("Environment has (near-)infinite horizon and no terminal states. \
                 Reduce info level of OvercookedEnv to not see this message.")
 
@@ -152,11 +152,14 @@ class OvercookedEnv(object):
         # TODO: turn this into a "formatting action probs" function and add action symbols too
         action_probs = [None if "action_probs" not in agent_info.keys() else list(agent_info["action_probs"]) for agent_info in env_info["agent_infos"]]
         action_probs = [ None if player_action_probs is None else [round(p, 2) for p in player_action_probs] for player_action_probs in action_probs ]
-        print("Timestep: {}\nJoint action taken: {} \t Reward: {} + shaping_factor * {}\nAction probs by index: {}".format(
-                self.state.timestep,
+        print("Timestep: {}\nJoint action taken: {} \t Reward: {} + shaping_factor * {}\nAction probs by index: {}\nState potential = {} \t Δ potential = {} \n{}\n".format(
+                self.t,
                 tuple(Action.ACTION_TO_CHAR[a] for a in a_t),
                 r_t,
                 env_info["shaped_r_by_agent"],
+                action_probs,
+                self.mdp.potential_function(self.state),
+                0.99 * env_info["phi_s_prime"] - env_info["phi_s"], # Assuming gamma 0.99
                 self
             )
         )
@@ -181,7 +184,8 @@ class OvercookedEnv(object):
         # Update game_stats 
         self._update_game_stats(mdp_infos)
 
-        # Update state and done
+        # Update state, time, and done
+        self.t += 1
         self.state = next_state
         done = self.is_done()
         env_info = self._prepare_info_dict(joint_agent_action_info, mdp_infos)
@@ -205,18 +209,11 @@ class OvercookedEnv(object):
             "cumulative_shaped_rewards_by_agent": np.array([0] * self.mdp.num_players)
         }
         self.game_stats = {**events_dict, **rewards_dict}
+        self.t = 0
 
     def is_done(self):
         """Whether the episode is over."""
-        return self.state.timestep >= self.horizon or self.mdp.is_terminal(self.state)
-
-    def potential(self, mlp, state=None, gamma=0.99, max_steps=20):
-        """
-        Return the potential of the environment's current state, if no state is provided
-        Otherwise return the potential of `state`
-        """
-        state = state if state else self.state
-        return self.mdp.potential_function(state, mp=mlp.mp ,gamma=gamma, max_steps=max_steps)
+        return self.t >= self.horizon or self.mdp.is_terminal(self.state)
 
     def _prepare_info_dict(self, joint_agent_action_info, mdp_infos):
         """
@@ -229,6 +226,8 @@ class OvercookedEnv(object):
         # TODO: This can be further simplified by having all the mdp_infos copied over to the env_infos automatically 
         env_info["sparse_r_by_agent"] = mdp_infos["sparse_reward_by_agent"]
         env_info["shaped_r_by_agent"] = mdp_infos["shaped_reward_by_agent"]
+        env_info["phi_s"] = mdp_infos["phi_s"] # previous state
+        env_info["phi_s_prime"] = mdp_infos["phi_s_prime"] # new state
         return env_info
 
     def _add_episode_info(self, env_info):
@@ -238,7 +237,7 @@ class OvercookedEnv(object):
             "ep_shaped_r": sum(self.game_stats["cumulative_shaped_rewards_by_agent"]),
             "ep_sparse_r_by_agent": self.game_stats["cumulative_sparse_rewards_by_agent"],
             "ep_shaped_r_by_agent": self.game_stats["cumulative_shaped_rewards_by_agent"],
-            "ep_length": self.state.timestep
+            "ep_length": self.t
         }
         return env_info
 
@@ -255,7 +254,7 @@ class OvercookedEnv(object):
             event_occurred_by_idx = [int(x) for x in bool_list_by_agent]
             for idx, event_by_agent in enumerate(event_occurred_by_idx):
                 if event_by_agent:
-                    self.game_stats[event_type][idx].append(self.state.timestep)
+                    self.game_stats[event_type][idx].append(self.t)
 
 
     ####################
@@ -281,7 +280,7 @@ class OvercookedEnv(object):
         """
         Trajectory returned will a list of state-action pairs (s_t, joint_a_t, r_t, done_t, info_t).
         """
-        assert self.state.timestep == 0, "Did not reset environment before running agents"
+        assert self.t == 0, "Did not reset environment before running agents"
         trajectory = []
         done = False
 
@@ -298,10 +297,10 @@ class OvercookedEnv(object):
             s_tp1, r_t, done, info = self.step(a_t, a_info_t)
             trajectory.append((s_t, a_t, r_t, done, info))
 
-            if display and self.state.timestep < display_until:
+            if display and self.t < display_until:
                 self.print_state_transition(a_t, r_t, info)
 
-        assert len(trajectory) == self.state.timestep, "{} vs {}".format(len(trajectory), self.state.timestep)
+        assert len(trajectory) == self.t, "{} vs {}".format(len(trajectory), self.t)
 
         # Add final state
         if include_final_state:
@@ -309,7 +308,7 @@ class OvercookedEnv(object):
 
         total_sparse = sum(self.game_stats["cumulative_sparse_rewards_by_agent"])
         total_shaped = sum(self.game_stats["cumulative_shaped_rewards_by_agent"])
-        return np.array(trajectory), self.state.timestep, total_sparse, total_shaped
+        return np.array(trajectory), self.t, total_sparse, total_shaped
 
     def get_rollouts(self, agent_pair, num_games, display=False, final_state=False, display_until=np.Inf, metadata_fn=None, metadata_info_fn=None, info=True):
         """

@@ -195,7 +195,6 @@ class AgentFromPolicy(Agent):
         self.policy.mdp = mdp
     
     def reset(self):
-        super(AgentFromPolicy, self).reset()
         self.policy.mdp = None
 
 class RandomAgent(Agent):
@@ -395,18 +394,6 @@ class GreedyHumanModel(Agent):
         return actions_and_infos_n
 
     def action(self, state):
-
-        ################
-        player = state.players[self.agent_index]
-        pot_states_dict = self.mlp.mdp.get_pot_states(state)
-        # Press interact if in front of soup that is full but not cooking
-        pos_of_facing_terrain = Action.move_in_direction(player.position, player.orientation)
-        facing_terrain_type = self.mdp.get_terrain_type_at_pos(pos_of_facing_terrain)
-        if facing_terrain_type == "P" and pos_of_facing_terrain in pot_states_dict["3_items"]:
-            # Onions are ready but haven't started cooking yet
-            return Action.INTERACT, {}
-        ################
-
         possible_motion_goals = self.ml_action(state)
 
         # Once we have identified the motion goals for the medium
@@ -520,10 +507,17 @@ class GreedyHumanModel(Agent):
         counter_objects = self.mlp.mdp.get_counter_objects_dict(state, list(self.mlp.mdp.terrain_pos_dict['X']))
         pot_states_dict = self.mlp.mdp.get_pot_states(state)
 
+        # NOTE: this most likely will fail in some tomato scenarios
+        curr_order = state.curr_order
 
         if not player.has_object():
-            ready_soups = pot_states_dict['ready']
-            cooking_soups = pot_states_dict['cooking']
+
+            if curr_order == 'any':
+                ready_soups = pot_states_dict['onion']['ready'] + pot_states_dict['tomato']['ready']
+                cooking_soups = pot_states_dict['onion']['cooking'] + pot_states_dict['tomato']['cooking']
+            else:
+                ready_soups = pot_states_dict[curr_order]['ready']
+                cooking_soups = pot_states_dict[curr_order]['cooking']
 
             soup_nearly_ready = len(ready_soups) > 0 or len(cooking_soups) > 0
             other_has_dish = other_player.has_object() and other_player.get_object().name == 'dish'
@@ -531,13 +525,15 @@ class GreedyHumanModel(Agent):
             if soup_nearly_ready and not other_has_dish:
                 motion_goals = am.pickup_dish_actions(counter_objects)
             else:
-                next_order = list(state.all_orders)[0]
+                next_order = None
+                if state.num_orders_remaining > 1:
+                    next_order = state.next_order
 
-                if 'onion' in next_order:
+                if next_order == 'onion':
                     motion_goals = am.pickup_onion_actions(counter_objects)
-                elif 'tomato' in next_order:
+                elif next_order == 'tomato':
                     motion_goals = am.pickup_tomato_actions(counter_objects)
-                else:
+                elif next_order is None or next_order == 'any':
                     motion_goals = am.pickup_onion_actions(counter_objects) + am.pickup_tomato_actions(counter_objects)
 
         else:
