@@ -293,14 +293,15 @@ class StateVisualizer:
     def _render_objects(self, surface, objects, grid):
         def render_soup(surface, obj, grid):
             (x_pos, y_pos) = obj.position
+            contents, count, cook_time = obj.state
             if grid[y_pos][x_pos] == POT:
-                if obj.is_ready:
+                if cook_time >= 8:
                     soup_status = "cooked"
                 else:
                     soup_status = "idle"
             else: # grid[x][y] != POT
                 soup_status = "done"
-            frame_name = StateVisualizer._soup_frame_name(obj.ingredients, soup_status)
+            frame_name = StateVisualizer._soup_frame_name([contents] * count, soup_status)
             self.SOUPS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(obj.position), frame_name)
 
         for obj in objects.values():
@@ -313,8 +314,9 @@ class StateVisualizer:
         for key, obj in objects.items():
             (x_pos, y_pos) = obj.position
             if obj.name == "soup" and grid[y_pos][x_pos] == POT:
-                if obj._cooking_tick != -1 and (obj._cooking_tick <= obj.cook_time or self.show_timer_when_cooked):
-                    text_surface = self.cooking_timer_font.render(str(obj._cooking_tick), True, self.cooking_timer_font_color)
+                contents, count, cook_time = obj.state
+                if cook_time != -1 and (cook_time < 8 or self.show_timer_when_cooked):
+                    text_surface = self.cooking_timer_font.render(str(cook_time), True, self.cooking_timer_font_color)
                     (tile_pos_x, tile_pos_y) = self._position_in_scaled_pixels(obj.position)
 
                     # calculate font position to be in center on x axis, and 0.9 from top on y axis
